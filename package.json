@@ -1,0 +1,23 @@
+{
+  "name": "telegram-relay-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Бот-ретранслятор: сообщения клиентов приходят в вашу приватную группу, один клиент — один топик. Вы отвечаете в топике, бот доставляет ответ клиенту.",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "setup": "tsx src/scripts/setup.ts",
+    "set-webhook": "tsx src/scripts/set-webhook.ts",
+    "test": "tsx src/tests/e2e.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}

@@ -1,0 +1,29 @@
+# Шаблон systemd-юнита — держит бота живым: автозапуск при перезагрузке
+# сервера и автоматический перезапуск при падении процесса.
+#
+# Установка (на сервере):
+#   sudo cp deploy/telegram-relay-bot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now telegram-relay-bot
+#
+# Подробности — в DEPLOY.md.
+
+[Unit]
+Description=Telegram relay bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/telegram-relay-bot
+EnvironmentFile=/home/ubuntu/telegram-relay-bot/.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=5
+# systemd сам пишет stdout/stderr в журнал — смотреть: journalctl -u telegram-relay-bot -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
