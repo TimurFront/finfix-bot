@@ -142,7 +142,7 @@ Content-Type: application/json
   "kind": "full",
   "name": "Айдана",
   "company": "ТОО «Ромашка»",
-  "telegram": "@aidana_biz",
+  "phone": "+77001234567",
   "comment": "Розница, 3 юрлица, учёт сейчас в Excel",  // необязательно
   "plan": "Бизнес",                                      // необязательно
   "module": "Склад"                                      // необязательно
@@ -155,7 +155,7 @@ Content-Type: application/json
 }
 ```
 
-Для `full` обязательны `name`, `company`, `telegram` (формат `@username`, `@` можно не ставить — допишется сама). Для `quick` обязателен `phone` (`+` и 10–15 цифр). Ответ:
+Для `full` обязательны `name`, `company`, `phone`. Для `quick` обязателен только `phone`. Формат номера в обоих случаях один: `+` и 10–15 цифр. Ответ:
 
 - `200 {"ok":true}` — заявка доставлена в группу.
 - `400 {"ok":false,"error":"..."}` — не хватает обязательного поля или оно некорректно.
@@ -169,7 +169,7 @@ Content-Type: application/json
 ```bash
 curl -X POST https://ваш-сервер/leads/ВАШ_LEADS_SECRET \
   -H "Content-Type: application/json" \
-  -d '{"kind":"full","name":"Тест","company":"ООО Тест","telegram":"@test_user"}'
+  -d '{"kind":"full","name":"Тест","company":"ООО Тест","phone":"+77001234567"}'
 ```
 
 ### Как подключить форму на сайте

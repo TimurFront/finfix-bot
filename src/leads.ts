@@ -5,11 +5,15 @@ import { TelegramError, tg } from './telegram';
 
 /* --------------------------------- модель -----------------------------------
  * Форма зеркалит DemoRequest + LeadKind из FINFIXlanding (lib/validation.ts):
- *   full  — имя, компания, telegram обязательны; comment/plan/module опциональны
+ *   full  — имя, компания, телефон обязательны; comment/plan/module опциональны
  *   quick — только телефон (карточка «Консультация»)
  * Сайт уже валидирует и очищает поля на своей стороне (lib/sanitize.ts) —
  * здесь защита второго слоя: не доверяем чужому клиенту вслепую, но не
  * дублируем всю логику нормализации.
+ *
+ * Раньше в полной заявке обязательным был telegram: форма демо спрашивала
+ * username. Сайт перешёл на номер телефона с выбором кода страны, поэтому
+ * теперь в обоих видах заявки канал связи один и тот же — phone.
  * ------------------------------------------------------------------------- */
 
 export type LeadKind = 'full' | 'quick';
@@ -18,16 +22,14 @@ export interface LeadInput {
   kind: LeadKind;
   name: string;
   company: string;
-  telegram: string; // '@username' или '' для quick
   comment: string;
-  phone: string; // только для quick
+  phone: string; // канал связи в обоих видах заявки
   plan: string;
   module: string;
 }
 
-const LIMITS = { name: 200, company: 200, telegram: 64, comment: 3000, phone: 32, plan: 120, module: 120 };
+const LIMITS = { name: 200, company: 200, comment: 3000, phone: 32, plan: 120, module: 120 };
 
-const TELEGRAM_RE = /^@[a-zA-Z0-9_]{4,32}$/;
 const PHONE_RE = /^\+\d{10,15}$/;
 
 function str(v: unknown, max: number): string {
@@ -48,26 +50,26 @@ export function parseLead(raw: unknown): { ok: true; value: LeadInput } | { ok: 
   const plan = str(body.plan, LIMITS.plan);
   const module_ = str(body.module, LIMITS.module);
 
+  if (!phone) {
+    return {
+      ok: false,
+      error:
+        kind === 'quick' ? 'Поле "phone" обязательно для заявки kind=quick' : 'Поле "phone" обязательно',
+    };
+  }
+  if (!PHONE_RE.test(phone)) return { ok: false, error: 'Поле "phone" должно быть в формате +77001234567' };
+
   if (kind === 'quick') {
-    if (!phone) return { ok: false, error: 'Поле "phone" обязательно для заявки kind=quick' };
-    if (!PHONE_RE.test(phone)) return { ok: false, error: 'Поле "phone" должно быть в формате +77001234567' };
-    return { ok: true, value: { kind, name: '', company: '', telegram: '', comment, phone, plan, module: module_ } };
+    return { ok: true, value: { kind, name: '', company: '', comment, phone, plan, module: module_ } };
   }
 
   const name = str(body.name, LIMITS.name);
   const company = str(body.company, LIMITS.company);
-  let telegram = str(body.telegram, LIMITS.telegram);
 
   if (!name) return { ok: false, error: 'Поле "name" обязательно' };
   if (!company) return { ok: false, error: 'Поле "company" обязательно' };
-  if (!telegram) return { ok: false, error: 'Поле "telegram" обязательно' };
 
-  if (!telegram.startsWith('@')) telegram = '@' + telegram;
-  if (!TELEGRAM_RE.test(telegram)) {
-    return { ok: false, error: 'Поле "telegram" должно быть в формате @username (4–32 символа)' };
-  }
-
-  return { ok: true, value: { kind, name, company, telegram, comment, phone: '', plan, module: module_ } };
+  return { ok: true, value: { kind, name, company, comment, phone, plan, module: module_ } };
 }
 
 /* -------------------------------- topic -------------------------------- */
@@ -122,7 +124,7 @@ function formatLead(lead: LeadInput): string {
     ].join('\n');
   }
 
-  const lines = ['🆕 Новая заявка с сайта', '', `Имя: ${lead.name}`, `Компания: ${lead.company}`, `Telegram: ${lead.telegram}`];
+  const lines = ['🆕 Новая заявка с сайта', '', `Имя: ${lead.name}`, `Компания: ${lead.company}`, `Телефон: ${lead.phone}`];
   if (lead.comment) lines.push(`Комментарий: ${lead.comment}`);
   if (lead.plan) lines.push(`Тариф: ${lead.plan}`);
   if (lead.module) lines.push(`Доп. модуль: ${lead.module}`);
@@ -152,5 +154,5 @@ export async function recordLead(lead: LeadInput): Promise<void> {
     }
   }
 
-  log.info('Заявка с сайта записана', { kind: lead.kind, telegram: lead.telegram || undefined, phone: lead.phone || undefined });
+  log.info('Заявка с сайта записана', { kind: lead.kind, phone: lead.phone });
 }

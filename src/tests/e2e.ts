@@ -526,7 +526,7 @@ async function main() {
     kind: 'full',
     name: 'Айдана',
     company: 'ТОО «Ромашка»',
-    telegram: '@aidana_biz',
+    phone: '+77001234567',
     comment: 'Розница, 3 юрлица, учёт сейчас в Excel',
   };
 
@@ -542,39 +542,47 @@ async function main() {
     assert.equal(posts.length, 1);
     assert.match(posts[0].text, /Айдана/);
     assert.match(posts[0].text, /ТОО «Ромашка»/);
-    assert.match(posts[0].text, /@aidana_biz/);
+    assert.match(posts[0].text, /\+77001234567/);
     assert.match(posts[0].text, /Excel/);
   });
 
   await test('вторая заявка попадает в тот же топик, новый не создаётся', async () => {
     const topicsBefore = mock.topics.size;
-    await postLead({ ...goodLead, name: 'Марат', telegram: 'marat_ceo' });
+    await postLead({ ...goodLead, name: 'Марат', phone: '+79001234567' });
     assert.equal(mock.topics.size, topicsBefore, 'новый топик создаваться не должен');
     const topicId = Number(getState('leads_topic_id'));
     assert.equal(mock.postsIn(topicId).length, 2);
-    assert.match(mock.postsIn(topicId)[1].text, /@marat_ceo/, 'username нормализуется, добавляется @');
+    assert.match(mock.postsIn(topicId)[1].text, /\+79001234567/);
   });
 
   await test('заявка без обязательного поля отклоняется', async () => {
-    const res = await postLead({ kind: 'full', name: 'Без компании', telegram: 'someone' });
+    const res = await postLead({ kind: 'full', name: 'Без компании', phone: '+77001234567' });
     assert.equal(res.status, 400);
     const body = (await res.json()) as any;
     assert.match(body.error, /company/);
   });
 
-  await test('некорректный telegram username отклоняется', async () => {
-    const res = await postLead({ ...goodLead, telegram: 'не юзернейм с пробелами' });
+  await test('полная заявка без телефона отклоняется', async () => {
+    const { phone, ...withoutPhone } = goodLead;
+    const res = await postLead(withoutPhone);
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as any;
+    assert.match(body.error, /phone/);
+  });
+
+  await test('некорректный телефон в полной заявке отклоняется', async () => {
+    const res = await postLead({ ...goodLead, phone: '8 700 много цифр' });
     assert.equal(res.status, 400);
   });
 
   await test('поле comment необязательно', async () => {
     const { comment, ...withoutComment } = goodLead;
-    const res = await postLead({ ...withoutComment, telegram: 'no_comment_user' });
+    const res = await postLead(withoutComment);
     assert.equal(res.status, 200);
   });
 
   await test('тариф и модуль попадают в сообщение, если заданы', async () => {
-    await postLead({ ...goodLead, telegram: 'with_plan_user', plan: 'Бизнес', module: 'Склад' });
+    await postLead({ ...goodLead, plan: 'Бизнес', module: 'Склад' });
     const topicId = Number(getState('leads_topic_id'));
     const last = mock.postsIn(topicId).at(-1)!;
     assert.match(last.text, /Тариф: Бизнес/);
@@ -622,7 +630,7 @@ async function main() {
   });
 
   await test('слишком длинное поле обрезается, а не роняет запрос', async () => {
-    const res = await postLead({ ...goodLead, comment: 'x'.repeat(10_000), telegram: 'long_comment_user' });
+    const res = await postLead({ ...goodLead, comment: 'x'.repeat(10_000) });
     assert.equal(res.status, 200);
     const topicId = Number(getState('leads_topic_id'));
     const last = mock.postsIn(topicId).at(-1)!;
@@ -633,7 +641,7 @@ async function main() {
     const before = mock.postsIn(Number(getState('leads_topic_id'))).length;
     await Promise.all(
       Array.from({ length: 5 }, (_, i) =>
-        postLead({ ...goodLead, name: `Клиент${i}`, telegram: `lead_user_${i}` }),
+        postLead({ ...goodLead, name: `Клиент${i}` }),
       ),
     );
     const topicId = Number(getState('leads_topic_id'));
