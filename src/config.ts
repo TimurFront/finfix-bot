@@ -45,6 +45,16 @@ export const config = {
   /** Ставить ли реакцию на сообщение оператора после успешной доставки. */
   confirmWithReaction: bool(process.env.CONFIRM_WITH_REACTION, true),
 
+  /**
+   * Приём заявок с сайта: POST /leads/<LEADS_SECRET>.
+   * Если секрет не задан — эндпоинт выключен полностью (404 на любой запрос),
+   * чтобы случайно не оставить в интернете открытую форму без защиты.
+   */
+  leadsSecret: process.env.LEADS_SECRET ?? '',
+  leadsTopicName: process.env.LEADS_TOPIC_NAME ?? '📥 Обращения с сайта',
+  /** Access-Control-Allow-Origin для формы, если она шлёт запрос прямо из браузера. */
+  leadsCorsOrigin: process.env.LEADS_CORS_ORIGIN ?? '*',
+
   logLevel: process.env.LOG_LEVEL ?? 'info',
 };
 

@@ -85,12 +85,13 @@ async function main() {
   process.env.WEBHOOK_SECRET_PATH = 'secret-path-abc123';
   process.env.WEBHOOK_SECRET_TOKEN = 'secret-header-xyz789';
   process.env.WELCOME_TEXT = '';
+  process.env.LEADS_SECRET = 'leads-secret-qwerty';
   process.env.LOG_LEVEL = 'error';
 
   // config читает переменные окружения при импорте — поэтому импорт динамический
-  const { openStore, closeStore, getClientByUserId } = await import('../store');
+  const { openStore, closeStore, getClientByUserId, getState } = await import('../store');
   const { handleUpdate, setBotId, displayName } = await import('../relay');
-  const { startWebhookServer } = await import('../webhook');
+  const { startHttpServer } = await import('../server');
 
   openStore();
   setBotId(mock.botId);
@@ -442,7 +443,7 @@ async function main() {
 
   group('9. Webhook');
 
-  const server = startWebhookServer();
+  const server = startHttpServer();
   await new Promise((r) => setTimeout(r, 300));
   const base = `http://127.0.0.1:${port}`;
 
@@ -508,6 +509,107 @@ async function main() {
     for (const u of users) {
       assert.equal(mock.copiesInTopic(threadOf(u.id)!).length, 1, `потеряно сообщение от ${u.id}`);
     }
+  });
+
+  /* ========================= 11. Заявки с сайта =============================== */
+
+  group('11. Заявки с сайта');
+
+  const postLead = (body: unknown, path = `/leads/leads-secret-qwerty`) =>
+    fetch(base + path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  const goodLead = {
+    name: 'Айдана',
+    company: 'ТОО «Ромашка»',
+    telegram: '@aidana_biz',
+    about: 'Розница, 3 юрлица, учёт сейчас в Excel',
+  };
+
+  await test('корректная заявка создаёт отдельный топик и попадает в него', async () => {
+    const res = await postLead(goodLead);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as any;
+    assert.equal(body.ok, true);
+
+    const topicId = Number(getState('leads_topic_id'));
+    assert.ok(topicId, 'должен появиться выделенный топик для заявок');
+    const posts = mock.postsIn(topicId);
+    assert.equal(posts.length, 1);
+    assert.match(posts[0].text, /Айдана/);
+    assert.match(posts[0].text, /ТОО «Ромашка»/);
+    assert.match(posts[0].text, /@aidana_biz/);
+    assert.match(posts[0].text, /Excel/);
+  });
+
+  await test('вторая заявка попадает в тот же топик, новый не создаётся', async () => {
+    const topicsBefore = mock.topics.size;
+    await postLead({ ...goodLead, name: 'Марат', telegram: 'marat_ceo' });
+    assert.equal(mock.topics.size, topicsBefore, 'новый топик создаваться не должен');
+    const topicId = Number(getState('leads_topic_id'));
+    assert.equal(mock.postsIn(topicId).length, 2);
+    assert.match(mock.postsIn(topicId)[1].text, /@marat_ceo/, 'username нормализуется, добавляется @');
+  });
+
+  await test('заявка без обязательного поля отклоняется', async () => {
+    const res = await postLead({ name: 'Без компании', telegram: 'someone' });
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as any;
+    assert.match(body.error, /company/);
+  });
+
+  await test('некорректный telegram username отклоняется', async () => {
+    const res = await postLead({ ...goodLead, telegram: 'не юзернейм с пробелами' });
+    assert.equal(res.status, 400);
+  });
+
+  await test('поле about необязательно', async () => {
+    const { about, ...withoutAbout } = goodLead;
+    const res = await postLead({ ...withoutAbout, telegram: 'no_about_user' });
+    assert.equal(res.status, 200);
+  });
+
+  await test('неверный секрет в пути — 404, эндпоинт не выдаёт себя', async () => {
+    const res = await postLead(goodLead, '/leads/wrong-secret');
+    assert.equal(res.status, 404);
+  });
+
+  await test('OPTIONS-preflight отвечает CORS-заголовками', async () => {
+    const res = await fetch(base + '/leads/leads-secret-qwerty', { method: 'OPTIONS' });
+    assert.equal(res.status, 204);
+    assert.equal(res.headers.get('access-control-allow-origin'), '*');
+    assert.match(res.headers.get('access-control-allow-methods') ?? '', /POST/);
+  });
+
+  await test('битый JSON в заявке не роняет сервер', async () => {
+    const res = await fetch(base + '/leads/leads-secret-qwerty', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: 'не json вообще',
+    });
+    assert.equal(res.status, 400);
+  });
+
+  await test('слишком длинное поле обрезается, а не роняет запрос', async () => {
+    const res = await postLead({ ...goodLead, about: 'x'.repeat(10_000), telegram: 'long_about_user' });
+    assert.equal(res.status, 200);
+    const topicId = Number(getState('leads_topic_id'));
+    const last = mock.postsIn(topicId).at(-1)!;
+    assert.ok(last.text.length < 5000, 'текст сообщения должен быть ограничен разумной длиной');
+  });
+
+  await test('5 заявок подряд не теряются', async () => {
+    const before = mock.postsIn(Number(getState('leads_topic_id'))).length;
+    await Promise.all(
+      Array.from({ length: 5 }, (_, i) =>
+        postLead({ ...goodLead, name: `Клиент${i}`, telegram: `lead_user_${i}` }),
+      ),
+    );
+    const topicId = Number(getState('leads_topic_id'));
+    assert.equal(mock.postsIn(topicId).length, before + 5);
   });
 
   /* ================================ итоги ================================== */

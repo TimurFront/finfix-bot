@@ -1,10 +1,9 @@
-import http from 'node:http';
 import { config } from './config';
 import { log } from './log';
 import { closeStore, openStore, purgeOldUpdates } from './store';
 import { setBotId } from './relay';
 import { startPolling, stopPolling } from './poller';
-import { startWebhookServer } from './webhook';
+import { startHttpServer } from './server';
 import { tg } from './telegram';
 
 function checkConfig(): string[] {
@@ -19,6 +18,9 @@ function checkConfig(): string[] {
   if (config.mode === 'webhook') {
     if (!config.publicUrl) problems.push('PUBLIC_URL не задан (нужен для режима webhook)');
     if (!config.webhookSecretPath) problems.push('WEBHOOK_SECRET_PATH не задан');
+  }
+  if (!config.leadsSecret) {
+    log.info('LEADS_SECRET не задан — приём заявок с сайта выключен (это нормально, если функция не нужна)');
   }
   return problems;
 }
@@ -53,10 +55,11 @@ async function main() {
     }
   }
 
-  let server: http.Server | null = null;
+  // HTTP-сервер нужен независимо от режима работы с Telegram: приём заявок
+  // с сайта (/leads) — это отдельный публичный вход, не связанный с polling/webhook.
+  const server = startHttpServer();
 
   if (config.mode === 'webhook') {
-    server = startWebhookServer();
     log.info('Не забудьте один раз выполнить: npm run set-webhook');
   } else {
     void startPolling();
