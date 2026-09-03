@@ -523,13 +523,14 @@ async function main() {
     });
 
   const goodLead = {
+    kind: 'full',
     name: 'Айдана',
     company: 'ТОО «Ромашка»',
     telegram: '@aidana_biz',
-    about: 'Розница, 3 юрлица, учёт сейчас в Excel',
+    comment: 'Розница, 3 юрлица, учёт сейчас в Excel',
   };
 
-  await test('корректная заявка создаёт отдельный топик и попадает в него', async () => {
+  await test('корректная заявка (full) создаёт отдельный топик и попадает в него', async () => {
     const res = await postLead(goodLead);
     assert.equal(res.status, 200);
     const body = (await res.json()) as any;
@@ -555,7 +556,7 @@ async function main() {
   });
 
   await test('заявка без обязательного поля отклоняется', async () => {
-    const res = await postLead({ name: 'Без компании', telegram: 'someone' });
+    const res = await postLead({ kind: 'full', name: 'Без компании', telegram: 'someone' });
     assert.equal(res.status, 400);
     const body = (await res.json()) as any;
     assert.match(body.error, /company/);
@@ -566,10 +567,37 @@ async function main() {
     assert.equal(res.status, 400);
   });
 
-  await test('поле about необязательно', async () => {
-    const { about, ...withoutAbout } = goodLead;
-    const res = await postLead({ ...withoutAbout, telegram: 'no_about_user' });
+  await test('поле comment необязательно', async () => {
+    const { comment, ...withoutComment } = goodLead;
+    const res = await postLead({ ...withoutComment, telegram: 'no_comment_user' });
     assert.equal(res.status, 200);
+  });
+
+  await test('тариф и модуль попадают в сообщение, если заданы', async () => {
+    await postLead({ ...goodLead, telegram: 'with_plan_user', plan: 'Бизнес', module: 'Склад' });
+    const topicId = Number(getState('leads_topic_id'));
+    const last = mock.postsIn(topicId).at(-1)!;
+    assert.match(last.text, /Тариф: Бизнес/);
+    assert.match(last.text, /Доп\. модуль: Склад/);
+  });
+
+  await test('быстрая заявка (kind=quick) требует только телефон', async () => {
+    const res = await postLead({ kind: 'quick', phone: '+77001234567' });
+    assert.equal(res.status, 200);
+    const topicId = Number(getState('leads_topic_id'));
+    const last = mock.postsIn(topicId).at(-1)!;
+    assert.match(last.text, /консультацию/);
+    assert.match(last.text, /\+77001234567/);
+  });
+
+  await test('быстрая заявка без телефона отклоняется', async () => {
+    const res = await postLead({ kind: 'quick' });
+    assert.equal(res.status, 400);
+  });
+
+  await test('некорректный телефон в быстрой заявке отклоняется', async () => {
+    const res = await postLead({ kind: 'quick', phone: '12345' });
+    assert.equal(res.status, 400);
   });
 
   await test('неверный секрет в пути — 404, эндпоинт не выдаёт себя', async () => {
@@ -594,7 +622,7 @@ async function main() {
   });
 
   await test('слишком длинное поле обрезается, а не роняет запрос', async () => {
-    const res = await postLead({ ...goodLead, about: 'x'.repeat(10_000), telegram: 'long_about_user' });
+    const res = await postLead({ ...goodLead, comment: 'x'.repeat(10_000), telegram: 'long_comment_user' });
     assert.equal(res.status, 200);
     const topicId = Number(getState('leads_topic_id'));
     const last = mock.postsIn(topicId).at(-1)!;
