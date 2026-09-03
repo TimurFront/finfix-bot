@@ -77,14 +77,14 @@ node -v
 Код уже подготовлен и закоммичен локально. Осталось создать пустой репозиторий и запушить.
 
 1. Откройте https://github.com/new
-2. **Repository name**: например `telegram-relay-bot`. Public или Private — на ваш выбор, секретов в коде нет (токен хранится только в `.env`, он в `.gitignore` и никогда не коммитится).
+2. **Repository name**: **важно** — то имя, что вы здесь укажете, станет именем папки на сервере после `git clone` (шаг C2), и от него зависят пути в systemd-юните (шаг C5). Проще всего использовать то же имя, что уже в этом шаблоне — `finfix-bot` — тогда ничего в DEPLOY.md и `deploy/telegram-relay-bot.service` подставлять не придётся. Если назовёте иначе — на шаге C5 нужно будет поправить пути в юните под ваше имя (команда там же). Public или Private — на ваш выбор, секретов в коде нет (токен хранится только в `.env`, он в `.gitignore` и никогда не коммитится); но учтите: **приватный репозиторий `git clone` на сервере без токена не отдаст** — либо делайте публичным, либо настраивайте деплой-токен отдельно.
 3. **НЕ** ставьте галки «Add README» / «.gitignore» / «license» — они уже есть локально, лишний файл вызовет конфликт при первом пуше.
 4. **Create repository**.
 
 GitHub покажет команды для «existing repository» — выполните их в PowerShell **в папке проекта**:
 
 ```powershell
-git remote add origin https://github.com/ВАШ_ЛОГИН/telegram-relay-bot.git
+git remote add origin https://github.com/ВАШ_ЛОГИН/finfix-bot.git
 git branch -M main
 git push -u origin main
 ```
@@ -96,11 +96,13 @@ git push -u origin main
 Снова в SSH-сессии на сервере:
 
 ```bash
-git clone https://github.com/ВАШ_ЛОГИН/telegram-relay-bot.git
-cd telegram-relay-bot
+git clone https://github.com/ВАШ_ЛОГИН/finfix-bot.git
+cd finfix-bot
 npm ci
 npm run build
 ```
+
+`git clone` без явного имени папки называет её по имени репозитория — если на шаге C1 вы указали не `finfix-bot`, а что-то своё, здесь и везде дальше подставляйте это имя вместо `finfix-bot`.
 
 ### C3. Настройка .env
 
@@ -128,7 +130,7 @@ MODE=polling
 LEADS_SECRET=<длинная случайная строка>
 ```
 
-Дальше нужно открыть порт (по умолчанию `3000`) на **обоих** уровнях — Oracle держит их отдельно, и забытый один уровень выглядит как «сервер не отвечает» без единой подсказки, откуда проблема.
+Дальше нужно открыть порт (по умолчанию `3000`) сразу на **трёх** уровнях. Да, именно на трёх — на практике оказалось, что стандартный образ Ubuntu на Oracle несёт в себе ещё один, скрытый от глаз слой, о котором обычные гайды не упоминают вовсе. Забытый любой из трёх выглядит одинаково — «сервер не отвечает», без единой подсказки, какой именно.
 
 **Уровень 1 — облачный Security List** (в браузере):
 
@@ -141,7 +143,7 @@ LEADS_SECRET=<длинная случайная строка>
    - Description: `Заявки с сайта`
 4. **Add Ingress Rules** (сохранить).
 
-**Уровень 2 — firewall самой Ubuntu** (в SSH-сессии):
+**Уровень 2 — firewall самой Ubuntu, ufw** (в SSH-сессии):
 
 ```bash
 sudo apt-get install -y ufw
@@ -153,11 +155,25 @@ sudo ufw status
 
 `sudo ufw allow OpenSSH` — обязательно выполнить **до** `enable`, иначе рискуете отрезать себе SSH-доступ.
 
+**Уровень 3 — предустановленные iptables-правила образа (самый неочевидный).** У Oracle-образа Ubuntu уже есть свой набор iptables-правил, настроенный ДО того, как вы вообще прикоснулись к ufw: он разрешает только порт 22 и **отклоняет всё остальное — причём это правило стоит РАНЬШЕ цепочек ufw**. Из-за этого порт может быть открыт и в Security List, и в ufw, а снаружи всё равно не отвечать: пакет отклоняется этим более ранним правилом ещё до того, как ufw вообще успевает его увидеть.
+
+Проверить, есть ли эта проблема:
+```bash
+sudo iptables -L INPUT -n --line-numbers -v
+```
+Если видите строку `REJECT ... reject-with icmp-host-prohibited` **раньше**, чем строки `ufw-before-input`, `ufw-after-input` и другие `ufw-*` — вот она, причина. Исправление (подставьте номер строки перед этим REJECT и свой порт):
+```bash
+sudo iptables -I INPUT 5 -m state --state NEW -p tcp --dport 3000 -j ACCEPT
+sudo apt-get install -y iptables-persistent   # если ещё не стоит
+sudo netfilter-persistent save
+```
+(`5` — типичный номер строки REJECT на свежем образе; если у вас другой — используйте номер, который показала команда выше).
+
 Проверка с вашего ПК (PowerShell), после того как бот запущен (следующий шаг):
 ```powershell
 curl http://ВАШ_IP:3000/health
 ```
-Должно вернуть `{"ok":true,...}`. Если тайм-аут — значит, один из двух уровней ещё не открыт.
+Должно вернуть `{"ok":true,...}`. Если тайм-аут — по очереди проверьте все три уровня: Security List → `sudo ufw status` → `sudo iptables -L INPUT -n --line-numbers -v`.
 
 ### C4. Узнать GROUP_ID и проверить, что всё работает
 
@@ -177,6 +193,17 @@ npm start
 
 ```bash
 sudo cp deploy/telegram-relay-bot.service /etc/systemd/system/
+```
+
+Если на шаге C1 вы клонировали репозиторий **под другим именем**, а не `finfix-bot` — обязательно поправьте пути в скопированном юните (иначе служба упадёт с `Failed to load environment files: No such file or directory`):
+
+```bash
+sudo sed -i 's|/home/ubuntu/finfix-bot|/home/ubuntu/ВАШЕ_ИМЯ_ПАПКИ|g' /etc/systemd/system/telegram-relay-bot.service
+```
+
+Дальше в любом случае:
+
+```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now telegram-relay-bot
 sudo systemctl status telegram-relay-bot
@@ -197,7 +224,7 @@ journalctl -u telegram-relay-bot -f
 Если я пришлю изменения в код — на сервере:
 
 ```bash
-cd ~/telegram-relay-bot
+cd ~/finfix-bot
 git pull
 npm ci
 npm run build
@@ -214,4 +241,6 @@ sudo systemctl restart telegram-relay-bot
 | Бот не отвечает в группе | Group Privacy у бота (см. README.md) — самая частая причина |
 | `ssh` не подключается | Публичный IP не сменился? (после Stop/Start инстанса он может смениться, если не зарезервирован) |
 | Не хватает памяти на E2.1.Micro | `free -h` — если совсем впритык, добавьте своп: `sudo fallocate -l 1G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile` |
-| `/leads/...` не отвечает извне (тайм-аут) | Открыты ли **оба** уровня firewall (шаг C3.1): и Security List в консоли Oracle, и `ufw` на сервере — забытый один уровень выглядит одинаково |
+| `/leads/...` не отвечает извне (тайм-аут) | Открыты ли **все три** уровня firewall (шаг C3.1): Security List в консоли Oracle, `ufw` на сервере, и предустановленные iptables-правила образа (`sudo iptables -L INPUT -n --line-numbers -v` — ищите REJECT раньше цепочек `ufw-*`) — на практике причиной чаще всего оказывается именно третий, самый неочевидный |
+| Группа найдена, но бот не может создать тему (`not enough rights to create a topic`) | У бота есть админство, но не включено конкретно право **«Управление темами»** (Manage Topics) — это отдельный тумблер в списке прав администратора, включается вручную |
+| Инстанс создан, но `Public IP address` пустой (`-`) | Не назначился автоматически. Instance details → Instance access → **ephemeral public IP** (не «reserved», та ссылка в текущем UI ведёт в документацию, а не в форму) — либо Networking → VNIC → IP administration → Edit у приватного IP |
